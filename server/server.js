@@ -3,6 +3,7 @@ import cors from 'cors';
 import dotenv from 'dotenv';
 import connectDB from './config/db.js';
 import healthRoutes from './routes/healthRoutes.js';
+import memoRoutes from './routes/memoRoutes.js';
 import { notFound, errorHandler } from './middleware/errorMiddleware.js';
 
 dotenv.config();
@@ -22,6 +23,7 @@ app.use(express.urlencoded({ extended: true }));
 
 // Routes
 app.use('/api', healthRoutes);
+app.use('/api/memos', memoRoutes);
 
 app.get('/', (req, res) => {
   res.json({ message: 'AuditVault API is running' });
