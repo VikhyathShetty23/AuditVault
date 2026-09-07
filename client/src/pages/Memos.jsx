@@ -1,41 +1,164 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import PageHeader from '../components/PageHeader';
 import EmptyState from '../components/EmptyState';
+import api from '../services/api';
 import {
   FileText,
   Plus,
   Search,
   Filter,
   Eye,
-  Edit2,
   Trash2,
-  History,
   X,
-  Shield,
-  Info,
+  AlertCircle,
 } from 'lucide-react';
 
 const Memos = () => {
+  const [memos, setMemos] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  // Modal and Form state
   const [showCreateModal, setShowCreateModal] = useState(false);
+  const [title, setTitle] = useState('');
+  const [content, setContent] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [formError, setFormError] = useState(null);
+
+  // View memo modal state
+  const [viewingMemo, setViewingMemo] = useState(null);
+
+  // Filter & search state
   const [searchQuery, setSearchQuery] = useState('');
   const [filterSort, setFilterSort] = useState('newest');
+
+  // Fetch all memos from backend
+  const fetchMemos = async () => {
+    try {
+      setLoading(true);
+      setError(null);
+      const response = await api.get('/memos');
+      setMemos(response.data || []);
+    } catch (err) {
+      console.error('Failed to fetch memos:', err);
+      setError(err.response?.data?.message || 'Failed to load memos. Please check your connection.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchMemos();
+  }, []);
+
+  // Handle memo creation
+  const handleCreateMemo = async (e) => {
+    e.preventDefault();
+    if (!title.trim()) {
+      setFormError('Memo title is required.');
+      return;
+    }
+    if (!content.trim()) {
+      setFormError('Memo content is required.');
+      return;
+    }
+
+    try {
+      setSubmitting(true);
+      setFormError(null);
+      const response = await api.post('/memos', {
+        title: title.trim(),
+        content: content.trim(),
+      });
+
+      // Prepend newly created memo to list
+      setMemos((prev) => [response.data, ...prev]);
+      setTitle('');
+      setContent('');
+      setShowCreateModal(false);
+    } catch (err) {
+      console.error('Error creating memo:', err);
+      setFormError(err.response?.data?.message || 'Failed to create memo. Please try again.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  // Handle memo deletion
+  const handleDeleteMemo = async (id, e) => {
+    e.stopPropagation();
+    if (!window.confirm('Are you sure you want to delete this memo?')) {
+      return;
+    }
+
+    try {
+      await api.delete(`/memos/${id}`);
+      setMemos((prev) => prev.filter((m) => m._id !== id));
+      if (viewingMemo?._id === id) {
+        setViewingMemo(null);
+      }
+    } catch (err) {
+      console.error('Error deleting memo:', err);
+      alert(err.response?.data?.message || 'Failed to delete memo.');
+    }
+  };
+
+  // Filter & sort logic
+  const filteredMemos = memos
+    .filter((memo) => {
+      const q = searchQuery.toLowerCase();
+      const memoTitle = memo.title?.toLowerCase() || '';
+      const memoContent = memo.content?.toLowerCase() || '';
+      return memoTitle.includes(q) || memoContent.includes(q);
+    })
+    .sort((a, b) => {
+      if (filterSort === 'newest') {
+        return new Date(b.createdAt) - new Date(a.createdAt);
+      }
+      if (filterSort === 'oldest') {
+        return new Date(a.createdAt) - new Date(b.createdAt);
+      }
+      if (filterSort === 'title') {
+        return (a.title || '').localeCompare(b.title || '');
+      }
+      return 0;
+    });
+
+  const formatDate = (dateString) => {
+    if (!dateString) return '-';
+    const date = new Date(dateString);
+    return isNaN(date.getTime()) ? '-' : date.toLocaleString();
+  };
 
   return (
     <div className="memos-page">
       <PageHeader
         title="Memos"
         subtitle="Manage and organize confidential text documents with automatic audit tracking."
-        badge="Phase 1 UI Shell"
+        badge="Active"
         actions={
           <button
             className="btn btn-primary"
-            onClick={() => setShowCreateModal(true)}
+            onClick={() => {
+              setFormError(null);
+              setShowCreateModal(true);
+            }}
           >
             <Plus size={15} />
             <span>New Memo</span>
           </button>
         }
       />
+
+      {error && (
+        <div className="notice-box" style={{ borderColor: 'var(--status-danger-border)', backgroundColor: 'var(--status-danger-bg)', color: 'var(--status-danger)', marginBottom: '1rem' }}>
+          <AlertCircle size={18} className="notice-box-icon" />
+          <div>
+            <div className="notice-box-title" style={{ color: 'var(--status-danger)' }}>Error Loading Memos</div>
+            <div>{error}</div>
+          </div>
+        </div>
+      )}
 
       {/* Filter and Search Toolbar */}
       <div className="filter-bar">
@@ -67,11 +190,11 @@ const Memos = () => {
         </div>
 
         <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-          0 memos found
+          {filteredMemos.length} {filteredMemos.length === 1 ? 'memo' : 'memos'} found
         </div>
       </div>
 
-      {/* Memo Table Shell */}
+      {/* Memo Table */}
       <div className="table-container">
         <div className="table-wrapper">
           <table className="data-table">
@@ -85,30 +208,93 @@ const Memos = () => {
               </tr>
             </thead>
             <tbody>
-              <tr>
-                <td colSpan={5} className="table-empty-row">
-                  <EmptyState
-                    icon={FileText}
-                    title="No Memos Available"
-                    description="Your memo repository is currently empty. Click 'New Memo' to create your first confidential document."
-                    action={
-                      <button
-                        className="btn btn-primary btn-sm"
-                        onClick={() => setShowCreateModal(true)}
-                      >
-                        <Plus size={14} />
-                        <span>Create Memo</span>
-                      </button>
-                    }
-                  />
-                </td>
-              </tr>
+              {loading ? (
+                <tr>
+                  <td colSpan={5} className="table-empty-row">
+                    <div style={{ color: 'var(--text-muted)' }}>Loading memos...</div>
+                  </td>
+                </tr>
+              ) : filteredMemos.length === 0 ? (
+                <tr>
+                  <td colSpan={5} className="table-empty-row">
+                    <EmptyState
+                      icon={FileText}
+                      title={searchQuery ? 'No Matching Memos' : 'No Memos Available'}
+                      description={
+                        searchQuery
+                          ? `No memos matched the search query "${searchQuery}".`
+                          : "Your memo repository is currently empty. Click 'New Memo' to create your first confidential document."
+                      }
+                      action={
+                        !searchQuery && (
+                          <button
+                            className="btn btn-primary btn-sm"
+                            onClick={() => {
+                              setFormError(null);
+                              setShowCreateModal(true);
+                            }}
+                          >
+                            <Plus size={14} />
+                            <span>Create Memo</span>
+                          </button>
+                        )
+                      }
+                    />
+                  </td>
+                </tr>
+              ) : (
+                filteredMemos.map((memo) => (
+                  <tr
+                    key={memo._id}
+                    style={{ cursor: 'pointer' }}
+                    onClick={() => setViewingMemo(memo)}
+                  >
+                    <td>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                        <FileText size={15} style={{ color: 'var(--accent-primary)', flexShrink: 0 }} />
+                        <span style={{ fontWeight: 500, color: 'var(--text-primary)' }}>
+                          {memo.title}
+                        </span>
+                      </div>
+                    </td>
+                    <td>
+                      <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
+                        {memo.ownerId ? memo.ownerId : 'System / Unassigned'}
+                      </span>
+                    </td>
+                    <td>{formatDate(memo.createdAt)}</td>
+                    <td>{formatDate(memo.updatedAt)}</td>
+                    <td style={{ textAlign: 'right' }}>
+                      <div style={{ display: 'inline-flex', gap: '0.375rem' }}>
+                        <button
+                          className="btn btn-outline btn-sm btn-icon-only"
+                          title="View Memo"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setViewingMemo(memo);
+                          }}
+                        >
+                          <Eye size={13} />
+                        </button>
+                        <button
+                          className="btn btn-outline btn-sm btn-icon-only"
+                          title="Delete Memo"
+                          style={{ color: 'var(--status-danger)' }}
+                          onClick={(e) => handleDeleteMemo(memo._id, e)}
+                        >
+                          <Trash2 size={13} />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))
+              )}
             </tbody>
           </table>
         </div>
       </div>
 
-      {/* Create Memo Modal UI Shell (Preview/Foundation) */}
+      {/* Create Memo Modal */}
       {showCreateModal && (
         <div
           style={{
@@ -122,7 +308,7 @@ const Memos = () => {
             zIndex: 50,
             padding: '1rem',
           }}
-          onClick={() => setShowCreateModal(false)}
+          onClick={() => !submitting && setShowCreateModal(false)}
         >
           <div
             className="card"
@@ -141,11 +327,12 @@ const Memos = () => {
                   Create New Memo
                 </h2>
                 <div className="card-subtitle">
-                  Phase 1 Form UI Preview &mdash; Non-persisted shell
+                  Store a confidential memo with automatic audit logging
                 </div>
               </div>
               <button
                 className="btn btn-outline btn-icon-only"
+                disabled={submitting}
                 onClick={() => setShowCreateModal(false)}
                 aria-label="Close dialog"
               >
@@ -153,17 +340,17 @@ const Memos = () => {
               </button>
             </div>
 
-            <div className="notice-box" style={{ marginBottom: '1rem' }}>
-              <Info size={16} className="notice-box-icon" />
-              <div>
-                <div className="notice-box-title">Frontend Shell Preview</div>
+            {formError && (
+              <div className="notice-box" style={{ borderColor: 'var(--status-danger-border)', backgroundColor: 'var(--status-danger-bg)', color: 'var(--status-danger)', marginBottom: '1rem' }}>
+                <AlertCircle size={16} className="notice-box-icon" />
                 <div>
-                  This modal demonstrates the memo creation UI structure. Memo CRUD and backend persistence will be activated in Phase 3.
+                  <div className="notice-box-title" style={{ color: 'var(--status-danger)' }}>Validation Error</div>
+                  <div>{formError}</div>
                 </div>
               </div>
-            </div>
+            )}
 
-            <form onSubmit={(e) => { e.preventDefault(); setShowCreateModal(false); }}>
+            <form onSubmit={handleCreateMemo}>
               <div className="form-group">
                 <label className="form-label" htmlFor="memo-modal-title">
                   Memo Title
@@ -173,7 +360,10 @@ const Memos = () => {
                   type="text"
                   className="form-input"
                   placeholder="e.g. Infrastructure Security Review Q3"
-                  defaultValue=""
+                  value={title}
+                  onChange={(e) => setTitle(e.target.value)}
+                  disabled={submitting}
+                  required
                 />
               </div>
 
@@ -186,7 +376,10 @@ const Memos = () => {
                   className="form-textarea"
                   rows={5}
                   placeholder="Enter confidential memo details, findings, or notes..."
-                  defaultValue=""
+                  value={content}
+                  onChange={(e) => setContent(e.target.value)}
+                  disabled={submitting}
+                  required
                 />
               </div>
 
@@ -203,15 +396,107 @@ const Memos = () => {
                 <button
                   type="button"
                   className="btn btn-outline"
+                  disabled={submitting}
                   onClick={() => setShowCreateModal(false)}
                 >
                   Cancel
                 </button>
-                <button type="submit" className="btn btn-primary">
-                  Save Memo
+                <button
+                  type="submit"
+                  className="btn btn-primary"
+                  disabled={submitting}
+                >
+                  {submitting ? 'Saving...' : 'Save Memo'}
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* View Memo Details Modal */}
+      {viewingMemo && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            backgroundColor: 'rgba(0, 0, 0, 0.7)',
+            backdropFilter: 'blur(3px)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 50,
+            padding: '1rem',
+          }}
+          onClick={() => setViewingMemo(null)}
+        >
+          <div
+            className="card"
+            style={{
+              width: '100%',
+              maxWidth: '580px',
+              margin: 0,
+              backgroundColor: 'var(--bg-primary)',
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="card-header">
+              <div>
+                <h2 className="card-title">
+                  <FileText size={18} style={{ color: 'var(--accent-primary)' }} />
+                  {viewingMemo.title}
+                </h2>
+                <div className="card-subtitle">
+                  Created {formatDate(viewingMemo.createdAt)} &bull; Modified {formatDate(viewingMemo.updatedAt)}
+                </div>
+              </div>
+              <button
+                className="btn btn-outline btn-icon-only"
+                onClick={() => setViewingMemo(null)}
+                aria-label="Close dialog"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div
+              style={{
+                backgroundColor: 'var(--bg-surface)',
+                border: '1px solid var(--border-color)',
+                borderRadius: 'var(--radius-sm)',
+                padding: '1rem',
+                fontSize: '0.875rem',
+                lineHeight: '1.6',
+                color: 'var(--text-primary)',
+                whiteSpace: 'pre-wrap',
+                maxHeight: '320px',
+                overflowY: 'auto',
+              }}
+            >
+              {viewingMemo.content}
+            </div>
+
+            <div
+              style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                marginTop: '1.25rem',
+                paddingTop: '1rem',
+                borderTop: '1px solid var(--border-color)',
+              }}
+            >
+              <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                Memo ID: <code>{viewingMemo._id}</code>
+              </span>
+              <button
+                type="button"
+                className="btn btn-outline"
+                onClick={() => setViewingMemo(null)}
+              >
+                Close
+              </button>
+            </div>
           </div>
         </div>
       )}
