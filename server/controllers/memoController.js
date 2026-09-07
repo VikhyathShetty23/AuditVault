@@ -1,12 +1,21 @@
 import mongoose from 'mongoose';
 import Memo from '../models/Memo.js';
 
+// Helper to reliably check memo ownership across Mongoose ObjectId and string comparisons
+const isOwner = (memo, userId) => {
+  if (!memo || !memo.ownerId || !userId) return false;
+  if (typeof memo.ownerId.equals === 'function') {
+    return memo.ownerId.equals(userId);
+  }
+  return memo.ownerId.toString() === userId.toString();
+};
+
 // @route   POST /api/memos
-// @desc    Create a new memo
-// @access  Public (No auth in this phase)
+// @desc    Create a new memo (assigned to authenticated user)
+// @access  Protected
 export const createMemo = async (req, res, next) => {
   try {
-    const { title, content, ownerId } = req.body;
+    const { title, content } = req.body;
 
     if (!title || typeof title !== 'string' || title.trim() === '') {
       return res.status(400).json({ message: 'Title is required and cannot be empty' });
@@ -16,10 +25,11 @@ export const createMemo = async (req, res, next) => {
       return res.status(400).json({ message: 'Content is required and cannot be empty' });
     }
 
+    // Always derive ownerId from authenticated user; ignore/reject client-provided ownerId
     const memo = await Memo.create({
       title: title.trim(),
       content: content.trim(),
-      ownerId: ownerId || null,
+      ownerId: req.user._id,
     });
 
     res.status(201).json(memo);
@@ -29,11 +39,11 @@ export const createMemo = async (req, res, next) => {
 };
 
 // @route   GET /api/memos
-// @desc    Get all memos
-// @access  Public (No auth in this phase)
+// @desc    Get all memos owned by the authenticated user
+// @access  Protected
 export const getMemos = async (req, res, next) => {
   try {
-    const memos = await Memo.find().sort({ createdAt: -1 });
+    const memos = await Memo.find({ ownerId: req.user._id }).sort({ createdAt: -1 });
     res.status(200).json(memos);
   } catch (error) {
     next(error);
@@ -41,8 +51,8 @@ export const getMemos = async (req, res, next) => {
 };
 
 // @route   GET /api/memos/:id
-// @desc    Get a single memo by ID
-// @access  Public (No auth in this phase)
+// @desc    Get a single memo by ID (ownership verified)
+// @access  Protected
 export const getMemoById = async (req, res, next) => {
   try {
     const { id } = req.params;
@@ -57,6 +67,10 @@ export const getMemoById = async (req, res, next) => {
       return res.status(404).json({ message: 'Memo not found' });
     }
 
+    if (!isOwner(memo, req.user._id)) {
+      return res.status(403).json({ message: 'Not authorized to access this memo' });
+    }
+
     res.status(200).json(memo);
   } catch (error) {
     next(error);
@@ -64,8 +78,8 @@ export const getMemoById = async (req, res, next) => {
 };
 
 // @route   PUT /api/memos/:id
-// @desc    Update a memo
-// @access  Public (No auth in this phase)
+// @desc    Update a memo (ownership verified)
+// @access  Protected
 export const updateMemo = async (req, res, next) => {
   try {
     const { id } = req.params;
@@ -93,6 +107,10 @@ export const updateMemo = async (req, res, next) => {
       return res.status(404).json({ message: 'Memo not found' });
     }
 
+    if (!isOwner(memo, req.user._id)) {
+      return res.status(403).json({ message: 'Not authorized to update this memo' });
+    }
+
     if (title !== undefined) {
       memo.title = title.trim();
     }
@@ -110,8 +128,8 @@ export const updateMemo = async (req, res, next) => {
 };
 
 // @route   DELETE /api/memos/:id
-// @desc    Delete a memo
-// @access  Public (No auth in this phase)
+// @desc    Delete a memo (ownership verified)
+// @access  Protected
 export const deleteMemo = async (req, res, next) => {
   try {
     const { id } = req.params;
@@ -124,6 +142,10 @@ export const deleteMemo = async (req, res, next) => {
 
     if (!memo) {
       return res.status(404).json({ message: 'Memo not found' });
+    }
+
+    if (!isOwner(memo, req.user._id)) {
+      return res.status(403).json({ message: 'Not authorized to delete this memo' });
     }
 
     await memo.deleteOne();

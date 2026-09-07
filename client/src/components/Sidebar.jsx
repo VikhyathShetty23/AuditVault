@@ -85,7 +85,7 @@ const Sidebar = ({ isOpen, onClose }) => {
             onClick={onClose}
           >
             <Lock size={18} className="nav-link-icon" />
-            <span>Login UI Shell</span>
+            <span>Authentication</span>
           </NavLink>
         </nav>
 

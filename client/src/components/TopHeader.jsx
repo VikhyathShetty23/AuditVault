@@ -1,9 +1,12 @@
 import React from 'react';
-import { useLocation, Link } from 'react-router-dom';
-import { Menu, Shield, UserCheck, Lock } from 'lucide-react';
+import { useLocation, Link, useNavigate } from 'react-router-dom';
+import { Menu, UserCheck, UserX, LogOut, LogIn } from 'lucide-react';
+import { useAuth } from '../context/AuthContext';
 
 const TopHeader = ({ onMenuToggle }) => {
   const location = useLocation();
+  const navigate = useNavigate();
+  const { user, isAuthenticated, logout } = useAuth();
 
   const getPageTitle = (pathname) => {
     switch (pathname) {
@@ -17,6 +20,11 @@ const TopHeader = ({ onMenuToggle }) => {
       default:
         return 'Overview';
     }
+  };
+
+  const handleLogout = () => {
+    logout();
+    navigate('/login');
   };
 
   return (
@@ -35,20 +43,40 @@ const TopHeader = ({ onMenuToggle }) => {
       </div>
 
       <div className="header-right">
-        <div className="user-badge" title="Phase 1 UI Session Indicator">
-          <span className="user-indicator-dot" />
-          <UserCheck size={14} />
-          <span>Security Auditor</span>
-        </div>
+        {isAuthenticated ? (
+          <>
+            <div className="user-badge" title="Authenticated User Session">
+              <span className="user-indicator-dot" />
+              <UserCheck size={14} />
+              <span>{user?.name || user?.email || 'Auditor'}</span>
+            </div>
 
-        <Link
-          to="/login"
-          className="btn btn-outline btn-sm"
-          title="Inspect Login UI Shell"
-        >
-          <Lock size={13} />
-          <span>Login UI</span>
-        </Link>
+            <button
+              onClick={handleLogout}
+              className="btn btn-outline btn-sm"
+              title="Sign Out"
+            >
+              <LogOut size={13} />
+              <span>Sign Out</span>
+            </button>
+          </>
+        ) : (
+          <>
+            <div className="user-badge" style={{ opacity: 0.7 }} title="Not Authenticated">
+              <UserX size={14} />
+              <span>Guest</span>
+            </div>
+
+            <Link
+              to="/login"
+              className="btn btn-primary btn-sm"
+              title="Sign In / Register"
+            >
+              <LogIn size={13} />
+              <span>Sign In</span>
+            </Link>
+          </>
+        )}
       </div>
     </header>
   );

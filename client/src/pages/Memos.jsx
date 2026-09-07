@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { Link } from 'react-router-dom';
 import PageHeader from '../components/PageHeader';
 import EmptyState from '../components/EmptyState';
 import api from '../services/api';
@@ -151,12 +152,19 @@ const Memos = () => {
       />
 
       {error && (
-        <div className="notice-box" style={{ borderColor: 'var(--status-danger-border)', backgroundColor: 'var(--status-danger-bg)', color: 'var(--status-danger)', marginBottom: '1rem' }}>
-          <AlertCircle size={18} className="notice-box-icon" />
-          <div>
-            <div className="notice-box-title" style={{ color: 'var(--status-danger)' }}>Error Loading Memos</div>
-            <div>{error}</div>
+        <div className="notice-box" style={{ borderColor: 'var(--status-danger-border)', backgroundColor: 'var(--status-danger-bg)', color: 'var(--status-danger)', marginBottom: '1rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
+            <AlertCircle size={18} className="notice-box-icon" />
+            <div>
+              <div className="notice-box-title" style={{ color: 'var(--status-danger)' }}>Error Loading Memos</div>
+              <div>{error}</div>
+            </div>
           </div>
+          {error.toLowerCase().includes('token') || error.toLowerCase().includes('auth') ? (
+            <Link to="/login" className="btn btn-primary btn-sm" style={{ flexShrink: 0 }}>
+              Sign In
+            </Link>
+          ) : null}
         </div>
       )}
 

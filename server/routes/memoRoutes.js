@@ -6,10 +6,12 @@ import {
   updateMemo,
   deleteMemo,
 } from '../controllers/memoController.js';
+import protect from '../middleware/authMiddleware.js';
 import auditMiddleware from '../middleware/auditMiddleware.js';
 
 const router = express.Router();
 
+router.use(protect);
 router.use(auditMiddleware);
 
 router.route('/')

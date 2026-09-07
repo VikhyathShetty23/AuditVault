@@ -2,9 +2,14 @@ import assert from 'node:assert';
 import test from 'node:test';
 import mongoose from 'mongoose';
 import express from 'express';
+import jwt from 'jsonwebtoken';
+
+process.env.JWT_SECRET = 'test-auditvault-super-secret-key-12345';
+
 import memoRoutes from './routes/memoRoutes.js';
 import auditRoutes from './routes/auditRoutes.js';
 import Memo from './models/Memo.js';
+import User from './models/User.js';
 import AuditLog from './models/AuditLog.js';
 import {
   getActionType,
@@ -13,6 +18,8 @@ import {
   getUserId,
 } from './middleware/auditMiddleware.js';
 import { getAuditLogsByMemoId } from './controllers/auditController.js';
+
+const defaultUserId = new mongoose.Types.ObjectId().toString();
 
 // Helper to create mock req, res, next for controller unit testing
 const createMockContext = (options = {}) => {
@@ -23,7 +30,7 @@ const createMockContext = (options = {}) => {
     headers: options.headers || {},
     ip: options.ip || '127.0.0.1',
     socket: options.socket || { remoteAddress: '127.0.0.1' },
-    user: options.user || null,
+    user: options.user !== undefined ? options.user : { _id: defaultUserId },
   };
 
   let statusCode = 200;
@@ -127,13 +134,20 @@ test('Audit Controller Unit Tests', async (t) => {
     assert.deepStrictEqual(res.getJSON(), { message: 'Invalid memo ID' });
   });
 
-  await t.test('2. GET /api/audit/:memoId returns sorted audit logs newest first', async () => {
+  await t.test('2. GET /api/audit/:memoId returns sorted audit logs newest first for authorized owner', async () => {
     const mockLogs = [
-      { _id: 'log2', memoId: validMemoId, actionType: 'READ', timestamp: new Date(2000) },
-      { _id: 'log1', memoId: validMemoId, actionType: 'CREATE', timestamp: new Date(1000) },
+      { _id: 'log2', memoId: validMemoId, actionType: 'READ', timestamp: new Date(2000), userId: defaultUserId },
+      { _id: 'log1', memoId: validMemoId, actionType: 'CREATE', timestamp: new Date(1000), userId: defaultUserId },
     ];
 
+    const originalMemoFindById = Memo.findById;
     const originalFind = AuditLog.find;
+
+    Memo.findById = async () => ({
+      _id: validMemoId,
+      ownerId: defaultUserId,
+    });
+
     AuditLog.find = (query) => ({
       sort: (sortSpec) => {
         assert.deepStrictEqual(query, { memoId: validMemoId });
@@ -154,16 +168,17 @@ test('Audit Controller Unit Tests', async (t) => {
       assert.strictEqual(res.getJSON()[0].actionType, 'READ');
       assert.strictEqual(res.getJSON()[1].actionType, 'CREATE');
     } finally {
+      Memo.findById = originalMemoFindById;
       AuditLog.find = originalFind;
     }
   });
 
   await t.test('3. GET /api/audit/:memoId passes unexpected error to next()', async () => {
-    const originalFind = AuditLog.find;
+    const originalMemoFindById = Memo.findById;
     const dbError = new Error('Database disconnected');
-    AuditLog.find = () => ({
-      sort: () => Promise.reject(dbError),
-    });
+    Memo.findById = async () => {
+      throw dbError;
+    };
 
     try {
       const { req, res, next, getError } = createMockContext({
@@ -174,7 +189,7 @@ test('Audit Controller Unit Tests', async (t) => {
 
       assert.strictEqual(getError(), dbError);
     } finally {
-      AuditLog.find = originalFind;
+      Memo.findById = originalMemoFindById;
     }
   });
 });
@@ -185,6 +200,14 @@ test('Audit Logging End-to-End Integration Tests', async (t) => {
   app.use('/api/memos', memoRoutes);
   app.use('/api/audit', auditRoutes);
 
+  const testUser = {
+    _id: defaultUserId,
+    name: 'Audit Tester',
+    email: 'tester@auditvault.io',
+    role: 'user',
+  };
+  const testToken = jwt.sign({ id: defaultUserId }, process.env.JWT_SECRET);
+
   // In-memory data stores
   const memoStore = new Map();
   const auditStore = [];
@@ -194,6 +217,11 @@ test('Audit Logging End-to-End Integration Tests', async (t) => {
   const originalMemoFindById = Memo.findById;
   const originalAuditCreate = AuditLog.create;
   const originalAuditFind = AuditLog.find;
+  const originalUserFindById = User.findById;
+
+  User.findById = (id) => ({
+    select: () => Promise.resolve(testUser),
+  });
 
   // Mock Memo model methods
   Memo.create = async (data) => {
@@ -202,7 +230,7 @@ test('Audit Logging End-to-End Integration Tests', async (t) => {
       _id: id,
       title: data.title,
       content: data.content,
-      ownerId: data.ownerId || null,
+      ownerId: data.ownerId,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
@@ -210,8 +238,14 @@ test('Audit Logging End-to-End Integration Tests', async (t) => {
     return memo;
   };
 
-  Memo.find = () => ({
-    sort: () => Promise.resolve(Array.from(memoStore.values())),
+  Memo.find = (filter = {}) => ({
+    sort: () => {
+      let results = Array.from(memoStore.values());
+      if (filter.ownerId) {
+        results = results.filter((m) => m.ownerId.toString() === filter.ownerId.toString());
+      }
+      return Promise.resolve(results);
+    },
   });
 
   Memo.findById = async (id) => {
@@ -269,14 +303,19 @@ test('Audit Logging End-to-End Integration Tests', async (t) => {
   const memoBaseUrl = `http://127.0.0.1:${port}/api/memos`;
   const auditBaseUrl = `http://127.0.0.1:${port}/api/audit`;
 
+  const authHeaders = {
+    'Content-Type': 'application/json',
+    Authorization: `Bearer ${testToken}`,
+  };
+
   try {
     let createdMemoId;
 
     // A. CREATE memo -> exactly one CREATE audit record
-    await t.test('A. CREATE memo creates exactly one CREATE audit record', async () => {
+    await t.test('A. CREATE memo creates exactly one CREATE audit record with user ID', async () => {
       const res = await fetch(memoBaseUrl, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders,
         body: JSON.stringify({
           title: 'Top Secret Plan',
           content: 'Confidential strategy details.',
@@ -289,25 +328,31 @@ test('Audit Logging End-to-End Integration Tests', async (t) => {
       createdMemoId = data._id;
 
       // Verify audit record via GET /api/audit/:memoId
-      const auditRes = await fetch(`${auditBaseUrl}/${createdMemoId}`);
+      const auditRes = await fetch(`${auditBaseUrl}/${createdMemoId}`, {
+        headers: { Authorization: `Bearer ${testToken}` },
+      });
       assert.strictEqual(auditRes.status, 200);
       const auditLogs = await auditRes.json();
       assert.strictEqual(auditLogs.length, 1);
       assert.strictEqual(auditLogs[0].actionType, 'CREATE');
       assert.strictEqual(auditLogs[0].memoId, createdMemoId);
-      assert.strictEqual(auditLogs[0].userId, null);
+      assert.strictEqual(auditLogs[0].userId.toString(), defaultUserId);
       assert.ok(auditLogs[0].ipAddress);
     });
 
     // B. READ a specific memo -> exactly one READ audit record
     await t.test('B. READ a specific memo appends exactly one READ audit record', async () => {
-      const res = await fetch(`${memoBaseUrl}/${createdMemoId}`);
+      const res = await fetch(`${memoBaseUrl}/${createdMemoId}`, {
+        headers: { Authorization: `Bearer ${testToken}` },
+      });
       assert.strictEqual(res.status, 200);
       const memo = await res.json();
       assert.strictEqual(memo._id, createdMemoId);
 
       // Verify audit logs: now length 2 (newest first: READ, CREATE)
-      const auditRes = await fetch(`${auditBaseUrl}/${createdMemoId}`);
+      const auditRes = await fetch(`${auditBaseUrl}/${createdMemoId}`, {
+        headers: { Authorization: `Bearer ${testToken}` },
+      });
       assert.strictEqual(auditRes.status, 200);
       const auditLogs = await auditRes.json();
       assert.strictEqual(auditLogs.length, 2);
@@ -319,7 +364,7 @@ test('Audit Logging End-to-End Integration Tests', async (t) => {
     await t.test('C. UPDATE memo appends exactly one UPDATE audit record', async () => {
       const res = await fetch(`${memoBaseUrl}/${createdMemoId}`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders,
         body: JSON.stringify({
           title: 'Updated Plan Title',
         }),
@@ -327,7 +372,9 @@ test('Audit Logging End-to-End Integration Tests', async (t) => {
       assert.strictEqual(res.status, 200);
 
       // Verify audit logs: now length 3 (newest first: UPDATE, READ, CREATE)
-      const auditRes = await fetch(`${auditBaseUrl}/${createdMemoId}`);
+      const auditRes = await fetch(`${auditBaseUrl}/${createdMemoId}`, {
+        headers: { Authorization: `Bearer ${testToken}` },
+      });
       assert.strictEqual(auditRes.status, 200);
       const auditLogs = await auditRes.json();
       assert.strictEqual(auditLogs.length, 3);
@@ -340,15 +387,20 @@ test('Audit Logging End-to-End Integration Tests', async (t) => {
     await t.test('D. DELETE memo appends exactly one DELETE audit record', async () => {
       const res = await fetch(`${memoBaseUrl}/${createdMemoId}`, {
         method: 'DELETE',
+        headers: { Authorization: `Bearer ${testToken}` },
       });
       assert.strictEqual(res.status, 200);
 
       // Verify memo is deleted from memos collection
-      const getDeletedRes = await fetch(`${memoBaseUrl}/${createdMemoId}`);
+      const getDeletedRes = await fetch(`${memoBaseUrl}/${createdMemoId}`, {
+        headers: { Authorization: `Bearer ${testToken}` },
+      });
       assert.strictEqual(getDeletedRes.status, 404);
 
       // Verify audit logs: now length 4 (newest first: DELETE, UPDATE, READ, CREATE)
-      const auditRes = await fetch(`${auditBaseUrl}/${createdMemoId}`);
+      const auditRes = await fetch(`${auditBaseUrl}/${createdMemoId}`, {
+        headers: { Authorization: `Bearer ${testToken}` },
+      });
       assert.strictEqual(auditRes.status, 200);
       const auditLogs = await auditRes.json();
       assert.strictEqual(auditLogs.length, 4);
@@ -360,7 +412,9 @@ test('Audit Logging End-to-End Integration Tests', async (t) => {
 
     // E. GET /api/audit/:memoId returns records sorted newest first
     await t.test('E. GET /api/audit/:memoId returns records sorted newest first', async () => {
-      const auditRes = await fetch(`${auditBaseUrl}/${createdMemoId}`);
+      const auditRes = await fetch(`${auditBaseUrl}/${createdMemoId}`, {
+        headers: { Authorization: `Bearer ${testToken}` },
+      });
       assert.strictEqual(auditRes.status, 200);
       const auditLogs = await auditRes.json();
       assert.strictEqual(auditLogs.length, 4);
@@ -376,7 +430,9 @@ test('Audit Logging End-to-End Integration Tests', async (t) => {
     // F. GET /api/memos (list all) does NOT generate audit log
     await t.test('F. GET /api/memos (listing memos) does not generate audit logs', async () => {
       const initialLogCount = auditStore.length;
-      const res = await fetch(memoBaseUrl);
+      const res = await fetch(memoBaseUrl, {
+        headers: { Authorization: `Bearer ${testToken}` },
+      });
       assert.strictEqual(res.status, 200);
       assert.strictEqual(auditStore.length, initialLogCount);
     });
@@ -388,20 +444,22 @@ test('Audit Logging End-to-End Integration Tests', async (t) => {
       // 1. Failed CREATE (missing content) -> 400
       const failedCreateRes = await fetch(memoBaseUrl, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders,
         body: JSON.stringify({ title: 'No content' }),
       });
       assert.strictEqual(failedCreateRes.status, 400);
 
       // 2. Failed READ (non-existent ID) -> 404
       const nonExistentId = new mongoose.Types.ObjectId().toString();
-      const failedReadRes = await fetch(`${memoBaseUrl}/${nonExistentId}`);
+      const failedReadRes = await fetch(`${memoBaseUrl}/${nonExistentId}`, {
+        headers: { Authorization: `Bearer ${testToken}` },
+      });
       assert.strictEqual(failedReadRes.status, 404);
 
       // 3. Failed UPDATE (empty title) -> 400
       const failedUpdateRes = await fetch(`${memoBaseUrl}/${nonExistentId}`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders,
         body: JSON.stringify({ title: '   ' }),
       });
       assert.strictEqual(failedUpdateRes.status, 400);
@@ -409,6 +467,7 @@ test('Audit Logging End-to-End Integration Tests', async (t) => {
       // 4. Failed DELETE (invalid ID format) -> 400
       const failedDeleteRes = await fetch(`${memoBaseUrl}/invalid-id`, {
         method: 'DELETE',
+        headers: { Authorization: `Bearer ${testToken}` },
       });
       assert.strictEqual(failedDeleteRes.status, 400);
 
@@ -418,7 +477,9 @@ test('Audit Logging End-to-End Integration Tests', async (t) => {
 
     // H. GET /api/audit/:memoId with invalid ID returns 400
     await t.test('H. GET /api/audit/:memoId returns 400 for invalid memo ID', async () => {
-      const res = await fetch(`${auditBaseUrl}/invalid-id`);
+      const res = await fetch(`${auditBaseUrl}/invalid-id`, {
+        headers: { Authorization: `Bearer ${testToken}` },
+      });
       assert.strictEqual(res.status, 400);
       const data = await res.json();
       assert.strictEqual(data.message, 'Invalid memo ID');
@@ -426,10 +487,14 @@ test('Audit Logging End-to-End Integration Tests', async (t) => {
 
     // I. DELETE leaves the DELETE audit record available after the Memo is removed
     await t.test('I. DELETE audit record remains queryable after Memo is removed', async () => {
-      const memoCheck = await fetch(`${memoBaseUrl}/${createdMemoId}`);
+      const memoCheck = await fetch(`${memoBaseUrl}/${createdMemoId}`, {
+        headers: { Authorization: `Bearer ${testToken}` },
+      });
       assert.strictEqual(memoCheck.status, 404);
 
-      const auditRes = await fetch(`${auditBaseUrl}/${createdMemoId}`);
+      const auditRes = await fetch(`${auditBaseUrl}/${createdMemoId}`, {
+        headers: { Authorization: `Bearer ${testToken}` },
+      });
       assert.strictEqual(auditRes.status, 200);
       const logs = await auditRes.json();
       assert.strictEqual(logs.length, 4);
@@ -437,6 +502,7 @@ test('Audit Logging End-to-End Integration Tests', async (t) => {
     });
   } finally {
     server.close();
+    User.findById = originalUserFindById;
     Memo.create = originalMemoCreate;
     Memo.find = originalMemoFind;
     Memo.findById = originalMemoFindById;

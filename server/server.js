@@ -3,6 +3,7 @@ import cors from 'cors';
 import dotenv from 'dotenv';
 import connectDB from './config/db.js';
 import healthRoutes from './routes/healthRoutes.js';
+import authRoutes from './routes/authRoutes.js';
 import memoRoutes from './routes/memoRoutes.js';
 import auditRoutes from './routes/auditRoutes.js';
 import { notFound, errorHandler } from './middleware/errorMiddleware.js';
@@ -24,6 +25,7 @@ app.use(express.urlencoded({ extended: true }));
 
 // Routes
 app.use('/api', healthRoutes);
+app.use('/api/auth', authRoutes);
 app.use('/api/memos', memoRoutes);
 app.use('/api/audit', auditRoutes);
 

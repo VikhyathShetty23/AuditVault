@@ -2,8 +2,13 @@ import assert from 'node:assert';
 import test from 'node:test';
 import mongoose from 'mongoose';
 import express from 'express';
+import jwt from 'jsonwebtoken';
+
+process.env.JWT_SECRET = 'test-auditvault-super-secret-key-12345';
+
 import memoRoutes from './routes/memoRoutes.js';
 import Memo from './models/Memo.js';
+import User from './models/User.js';
 import AuditLog from './models/AuditLog.js';
 import {
   createMemo,
@@ -13,12 +18,15 @@ import {
   deleteMemo,
 } from './controllers/memoController.js';
 
+const defaultUserId = new mongoose.Types.ObjectId().toString();
+
 // Helper to create mock req, res, next
 const createMockContext = (options = {}) => {
   const req = {
     body: options.body || {},
     params: options.params || {},
     query: options.query || {},
+    user: options.user !== undefined ? options.user : { _id: defaultUserId },
   };
 
   let statusCode = 200;
@@ -59,7 +67,7 @@ test('Memo API Unit Tests', async (t) => {
       _id: new mongoose.Types.ObjectId(),
       title: data.title,
       content: data.content,
-      ownerId: data.ownerId || null,
+      ownerId: data.ownerId,
       createdAt: new Date(),
       updatedAt: new Date(),
     });
@@ -78,7 +86,7 @@ test('Memo API Unit Tests', async (t) => {
       const data = res.getJSON();
       assert.strictEqual(data.title, 'Security Review');
       assert.strictEqual(data.content, 'Confidential review information.');
-      assert.strictEqual(data.ownerId, null);
+      assert.strictEqual(data.ownerId.toString(), defaultUserId);
     } finally {
       Memo.create = originalCreate;
     }
@@ -124,15 +132,18 @@ test('Memo API Unit Tests', async (t) => {
     assert.match(res.getJSON().message, /content/i);
   });
 
-  await t.test('6. GET all memos returns 200 and list', async () => {
+  await t.test('6. GET all memos returns 200 and list for authenticated user', async () => {
     const originalFind = Memo.find;
     const mockMemos = [
-      { _id: new mongoose.Types.ObjectId(), title: 'Memo 1', content: 'Content 1' },
-      { _id: new mongoose.Types.ObjectId(), title: 'Memo 2', content: 'Content 2' },
+      { _id: new mongoose.Types.ObjectId(), title: 'Memo 1', content: 'Content 1', ownerId: defaultUserId },
+      { _id: new mongoose.Types.ObjectId(), title: 'Memo 2', content: 'Content 2', ownerId: defaultUserId },
     ];
-    Memo.find = () => ({
-      sort: () => Promise.resolve(mockMemos),
-    });
+    Memo.find = (filter) => {
+      assert.strictEqual(filter.ownerId.toString(), defaultUserId);
+      return {
+        sort: () => Promise.resolve(mockMemos),
+      };
+    };
 
     try {
       const { req, res, next } = createMockContext();
@@ -145,12 +156,13 @@ test('Memo API Unit Tests', async (t) => {
     }
   });
 
-  await t.test('7. GET an existing memo returns 200 and memo object', async () => {
+  await t.test('7. GET an existing memo returns 200 and memo object for owner', async () => {
     const originalFindById = Memo.findById;
     const mockMemo = {
       _id: validObjectId,
       title: 'Existing Memo',
       content: 'Existing Content',
+      ownerId: defaultUserId,
     };
     Memo.findById = async (id) => (id === validObjectId ? mockMemo : null);
 
@@ -188,12 +200,13 @@ test('Memo API Unit Tests', async (t) => {
     assert.match(res.getJSON().message, /invalid memo id/i);
   });
 
-  await t.test('10. PUT an existing memo updates and returns 200', async () => {
+  await t.test('10. PUT an existing memo updates and returns 200 for owner', async () => {
     const originalFindById = Memo.findById;
     const mockMemoInstance = {
       _id: validObjectId,
       title: 'Old Title',
       content: 'Old Content',
+      ownerId: defaultUserId,
       save: async function () {
         return this;
       },
@@ -272,11 +285,12 @@ test('Memo API Unit Tests', async (t) => {
     }
   });
 
-  await t.test('13. DELETE an existing memo returns 200 and success message', async () => {
+  await t.test('13. DELETE an existing memo returns 200 and success message for owner', async () => {
     const originalFindById = Memo.findById;
     let deleted = false;
     const mockMemoInstance = {
       _id: validObjectId,
+      ownerId: defaultUserId,
       deleteOne: async () => {
         deleted = true;
       },
@@ -324,12 +338,25 @@ test('Memo Router Integration Tests (Express End-to-End)', async (t) => {
   app.use(express.json());
   app.use('/api/memos', memoRoutes);
 
+  const testUser = {
+    _id: defaultUserId,
+    name: 'Test Auditor',
+    email: 'test@auditvault.io',
+    role: 'user',
+  };
+  const testToken = jwt.sign({ id: defaultUserId }, process.env.JWT_SECRET);
+
   // In-memory store for integration routing tests
   const store = new Map();
   const originalCreate = Memo.create;
   const originalFind = Memo.find;
   const originalFindById = Memo.findById;
   const originalAuditCreate = AuditLog.create;
+  const originalUserFindById = User.findById;
+
+  User.findById = (id) => ({
+    select: () => Promise.resolve(testUser),
+  });
 
   AuditLog.create = async (data) => ({ _id: new mongoose.Types.ObjectId(), ...data });
 
@@ -339,7 +366,7 @@ test('Memo Router Integration Tests (Express End-to-End)', async (t) => {
       _id: id,
       title: data.title,
       content: data.content,
-      ownerId: data.ownerId || null,
+      ownerId: data.ownerId,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
@@ -347,8 +374,14 @@ test('Memo Router Integration Tests (Express End-to-End)', async (t) => {
     return memo;
   };
 
-  Memo.find = () => ({
-    sort: () => Promise.resolve(Array.from(store.values())),
+  Memo.find = (filter = {}) => ({
+    sort: () => {
+      let results = Array.from(store.values());
+      if (filter.ownerId) {
+        results = results.filter((m) => m.ownerId.toString() === filter.ownerId.toString());
+      }
+      return Promise.resolve(results);
+    },
   });
 
   Memo.findById = async (id) => {
@@ -369,6 +402,10 @@ test('Memo Router Integration Tests (Express End-to-End)', async (t) => {
   const server = app.listen(0);
   const port = server.address().port;
   const baseUrl = `http://127.0.0.1:${port}/api/memos`;
+  const authHeaders = {
+    'Content-Type': 'application/json',
+    Authorization: `Bearer ${testToken}`,
+  };
 
   try {
     let createdId;
@@ -376,7 +413,7 @@ test('Memo Router Integration Tests (Express End-to-End)', async (t) => {
     await t.test('HTTP POST /api/memos -> 201', async () => {
       const res = await fetch(baseUrl, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders,
         body: JSON.stringify({
           title: 'Security Review',
           content: 'Confidential review information.',
@@ -386,12 +423,15 @@ test('Memo Router Integration Tests (Express End-to-End)', async (t) => {
       const data = await res.json();
       assert.strictEqual(data.title, 'Security Review');
       assert.strictEqual(data.content, 'Confidential review information.');
+      assert.strictEqual(data.ownerId.toString(), defaultUserId);
       assert.ok(data._id);
       createdId = data._id;
     });
 
     await t.test('HTTP GET /api/memos -> 200', async () => {
-      const res = await fetch(baseUrl);
+      const res = await fetch(baseUrl, {
+        headers: { Authorization: `Bearer ${testToken}` },
+      });
       assert.strictEqual(res.status, 200);
       const data = await res.json();
       assert.ok(Array.isArray(data));
@@ -399,7 +439,9 @@ test('Memo Router Integration Tests (Express End-to-End)', async (t) => {
     });
 
     await t.test('HTTP GET /api/memos/:id -> 200', async () => {
-      const res = await fetch(`${baseUrl}/${createdId}`);
+      const res = await fetch(`${baseUrl}/${createdId}`, {
+        headers: { Authorization: `Bearer ${testToken}` },
+      });
       assert.strictEqual(res.status, 200);
       const data = await res.json();
       assert.strictEqual(data._id, createdId);
@@ -409,7 +451,7 @@ test('Memo Router Integration Tests (Express End-to-End)', async (t) => {
     await t.test('HTTP PUT /api/memos/:id -> 200', async () => {
       const res = await fetch(`${baseUrl}/${createdId}`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders,
         body: JSON.stringify({
           title: 'Updated Security Review',
         }),
@@ -422,6 +464,7 @@ test('Memo Router Integration Tests (Express End-to-End)', async (t) => {
     await t.test('HTTP DELETE /api/memos/:id -> 200', async () => {
       const res = await fetch(`${baseUrl}/${createdId}`, {
         method: 'DELETE',
+        headers: { Authorization: `Bearer ${testToken}` },
       });
       assert.strictEqual(res.status, 200);
       const data = await res.json();
@@ -429,11 +472,14 @@ test('Memo Router Integration Tests (Express End-to-End)', async (t) => {
     });
 
     await t.test('HTTP GET /api/memos/:id after deletion -> 404', async () => {
-      const res = await fetch(`${baseUrl}/${createdId}`);
+      const res = await fetch(`${baseUrl}/${createdId}`, {
+        headers: { Authorization: `Bearer ${testToken}` },
+      });
       assert.strictEqual(res.status, 404);
     });
   } finally {
     server.close();
+    User.findById = originalUserFindById;
     Memo.create = originalCreate;
     Memo.find = originalFind;
     Memo.findById = originalFindById;
