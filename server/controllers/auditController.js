@@ -53,3 +53,15 @@ export const getAuditLogsByMemoId = async (req, res, next) => {
     next(error);
   }
 };
+
+// @route   GET /api/audit
+// @desc    Get all audit logs belonging to the authenticated user (newest first)
+// @access  Protected
+export const getAllAuditLogs = async (req, res, next) => {
+  try {
+    const logs = await AuditLog.find({ userId: req.user._id }).sort({ timestamp: -1 });
+    return res.status(200).json(logs);
+  } catch (error) {
+    next(error);
+  }
+};

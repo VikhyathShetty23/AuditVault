@@ -9,6 +9,7 @@ import {
   Search,
   Filter,
   Eye,
+  Edit2,
   Trash2,
   X,
   AlertCircle,
@@ -25,6 +26,13 @@ const Memos = () => {
   const [content, setContent] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState(null);
+
+  // Edit memo modal state
+  const [editingMemo, setEditingMemo] = useState(null);
+  const [editTitle, setEditTitle] = useState('');
+  const [editContent, setEditContent] = useState('');
+  const [editSubmitting, setEditSubmitting] = useState(false);
+  const [editFormError, setEditFormError] = useState(null);
 
   // View memo modal state
   const [viewingMemo, setViewingMemo] = useState(null);
@@ -101,6 +109,50 @@ const Memos = () => {
     } catch (err) {
       console.error('Error deleting memo:', err);
       alert(err.response?.data?.message || 'Failed to delete memo.');
+    }
+  };
+
+  // Open memo edit modal
+  const openEditModal = (memo, e) => {
+    if (e) e.stopPropagation();
+    setEditingMemo(memo);
+    setEditTitle(memo.title || '');
+    setEditContent(memo.content || '');
+    setEditFormError(null);
+  };
+
+  // Handle memo update
+  const handleEditMemo = async (e) => {
+    e.preventDefault();
+    if (!editTitle.trim()) {
+      setEditFormError('Memo title is required.');
+      return;
+    }
+    if (!editContent.trim()) {
+      setEditFormError('Memo content is required.');
+      return;
+    }
+
+    try {
+      setEditSubmitting(true);
+      setEditFormError(null);
+      const response = await api.put(`/memos/${editingMemo._id}`, {
+        title: editTitle.trim(),
+        content: editContent.trim(),
+      });
+
+      setMemos((prev) =>
+        prev.map((m) => (m._id === editingMemo._id ? response.data : m))
+      );
+      if (viewingMemo?._id === editingMemo._id) {
+        setViewingMemo(response.data);
+      }
+      setEditingMemo(null);
+    } catch (err) {
+      console.error('Error updating memo:', err);
+      setEditFormError(err.response?.data?.message || 'Failed to update memo. Please try again.');
+    } finally {
+      setEditSubmitting(false);
     }
   };
 
@@ -208,8 +260,7 @@ const Memos = () => {
           <table className="data-table">
             <thead>
               <tr>
-                <th style={{ width: '40%' }}>Title / Subject</th>
-                <th>Owner</th>
+                <th style={{ width: '45%' }}>Title / Subject</th>
                 <th>Created</th>
                 <th>Last Modified</th>
                 <th style={{ textAlign: 'right' }}>Actions</th>
@@ -218,13 +269,13 @@ const Memos = () => {
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={5} className="table-empty-row">
+                  <td colSpan={4} className="table-empty-row">
                     <div style={{ color: 'var(--text-muted)' }}>Loading memos...</div>
                   </td>
                 </tr>
               ) : filteredMemos.length === 0 ? (
                 <tr>
-                  <td colSpan={5} className="table-empty-row">
+                  <td colSpan={4} className="table-empty-row">
                     <EmptyState
                       icon={FileText}
                       title={searchQuery ? 'No Matching Memos' : 'No Memos Available'}
@@ -265,11 +316,6 @@ const Memos = () => {
                         </span>
                       </div>
                     </td>
-                    <td>
-                      <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
-                        {memo.ownerId ? memo.ownerId : 'System / Unassigned'}
-                      </span>
-                    </td>
                     <td>{formatDate(memo.createdAt)}</td>
                     <td>{formatDate(memo.updatedAt)}</td>
                     <td style={{ textAlign: 'right' }}>
@@ -283,6 +329,13 @@ const Memos = () => {
                           }}
                         >
                           <Eye size={13} />
+                        </button>
+                        <button
+                          className="btn btn-outline btn-sm btn-icon-only"
+                          title="Edit Memo"
+                          onClick={(e) => openEditModal(memo, e)}
+                        >
+                          <Edit2 size={13} />
                         </button>
                         <button
                           className="btn btn-outline btn-sm btn-icon-only"
@@ -497,14 +550,148 @@ const Memos = () => {
               <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
                 Memo ID: <code>{viewingMemo._id}</code>
               </span>
+              <div style={{ display: 'flex', gap: '0.5rem' }}>
+                <button
+                  type="button"
+                  className="btn btn-outline"
+                  onClick={() => {
+                    const m = viewingMemo;
+                    setViewingMemo(null);
+                    openEditModal(m);
+                  }}
+                >
+                  <Edit2 size={13} />
+                  <span>Edit</span>
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-outline"
+                  onClick={() => setViewingMemo(null)}
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Memo Modal */}
+      {editingMemo && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            backgroundColor: 'rgba(0, 0, 0, 0.7)',
+            backdropFilter: 'blur(3px)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 50,
+            padding: '1rem',
+          }}
+          onClick={() => !editSubmitting && setEditingMemo(null)}
+        >
+          <div
+            className="card"
+            style={{
+              width: '100%',
+              maxWidth: '540px',
+              margin: 0,
+              backgroundColor: 'var(--bg-primary)',
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="card-header">
+              <div>
+                <h2 className="card-title">
+                  <Edit2 size={18} style={{ color: 'var(--accent-primary)' }} />
+                  Edit Memo
+                </h2>
+                <div className="card-subtitle">
+                  Update memo details with automatic audit log tracking
+                </div>
+              </div>
               <button
-                type="button"
-                className="btn btn-outline"
-                onClick={() => setViewingMemo(null)}
+                className="btn btn-outline btn-icon-only"
+                disabled={editSubmitting}
+                onClick={() => setEditingMemo(null)}
+                aria-label="Close dialog"
               >
-                Close
+                <X size={16} />
               </button>
             </div>
+
+            {editFormError && (
+              <div className="notice-box" style={{ borderColor: 'var(--status-danger-border)', backgroundColor: 'var(--status-danger-bg)', color: 'var(--status-danger)', marginBottom: '1rem' }}>
+                <AlertCircle size={16} className="notice-box-icon" />
+                <div>
+                  <div className="notice-box-title" style={{ color: 'var(--status-danger)' }}>Validation Error</div>
+                  <div>{editFormError}</div>
+                </div>
+              </div>
+            )}
+
+            <form onSubmit={handleEditMemo}>
+              <div className="form-group">
+                <label className="form-label" htmlFor="memo-edit-title">
+                  Memo Title
+                </label>
+                <input
+                  id="memo-edit-title"
+                  type="text"
+                  className="form-input"
+                  placeholder="e.g. Infrastructure Security Review Q3"
+                  value={editTitle}
+                  onChange={(e) => setEditTitle(e.target.value)}
+                  disabled={editSubmitting}
+                  required
+                />
+              </div>
+
+              <div className="form-group">
+                <label className="form-label" htmlFor="memo-edit-content">
+                  Memo Content
+                </label>
+                <textarea
+                  id="memo-edit-content"
+                  className="form-textarea"
+                  rows={5}
+                  placeholder="Enter confidential memo details, findings, or notes..."
+                  value={editContent}
+                  onChange={(e) => setEditContent(e.target.value)}
+                  disabled={editSubmitting}
+                  required
+                />
+              </div>
+
+              <div
+                style={{
+                  display: 'flex',
+                  justifyContent: 'flex-end',
+                  gap: '0.5rem',
+                  marginTop: '1.25rem',
+                  paddingTop: '1rem',
+                  borderTop: '1px solid var(--border-color)',
+                }}
+              >
+                <button
+                  type="button"
+                  className="btn btn-outline"
+                  disabled={editSubmitting}
+                  onClick={() => setEditingMemo(null)}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="btn btn-primary"
+                  disabled={editSubmitting}
+                >
+                  {editSubmitting ? 'Saving Changes...' : 'Save Changes'}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

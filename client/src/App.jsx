@@ -1,47 +1,78 @@
 import React from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
-import { AuthProvider } from './context/AuthContext';
+import { AuthProvider, useAuth } from './context/AuthContext';
 import Layout from './components/Layout';
 import Login from './pages/Login';
 import Dashboard from './pages/Dashboard';
 import Memos from './pages/Memos';
 import AuditTrail from './pages/AuditTrail';
 
+// Redirects unauthenticated users to /login.
+const ProtectedRoute = ({ children }) => {
+  const { isAuthenticated } = useAuth();
+  if (!isAuthenticated) {
+    return <Navigate to="/login" replace />;
+  }
+  return children;
+};
+
+// Redirects already-authenticated users away from the login page.
+const PublicOnlyRoute = ({ children }) => {
+  const { isAuthenticated } = useAuth();
+  if (isAuthenticated) {
+    return <Navigate to="/dashboard" replace />;
+  }
+  return children;
+};
+
 function App() {
   return (
     <AuthProvider>
       <Router>
         <Routes>
-          {/* Public Login Route */}
-          <Route path="/login" element={<Login />} />
+          {/* Public Login Route — redirect away if already authenticated */}
+          <Route
+            path="/login"
+            element={
+              <PublicOnlyRoute>
+                <Login />
+              </PublicOnlyRoute>
+            }
+          />
 
-          {/* Authenticated Layout Shell Routes */}
+          {/* Authenticated Routes */}
           <Route
             path="/dashboard"
             element={
-              <Layout>
-                <Dashboard />
-              </Layout>
+              <ProtectedRoute>
+                <Layout>
+                  <Dashboard />
+                </Layout>
+              </ProtectedRoute>
             }
           />
           <Route
             path="/memos"
             element={
-              <Layout>
-                <Memos />
-              </Layout>
+              <ProtectedRoute>
+                <Layout>
+                  <Memos />
+                </Layout>
+              </ProtectedRoute>
             }
           />
           <Route
             path="/audit"
             element={
-              <Layout>
-                <AuditTrail />
-              </Layout>
+              <ProtectedRoute>
+                <Layout>
+                  <AuditTrail />
+                </Layout>
+              </ProtectedRoute>
             }
           />
 
-          {/* Root Redirect to Dashboard */}
+          {/* Root Redirect */}
           <Route path="/" element={<Navigate to="/dashboard" replace />} />
 
           {/* Wildcard Fallback */}

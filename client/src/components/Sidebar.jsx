@@ -92,7 +92,7 @@ const Sidebar = ({ isOpen, onClose }) => {
         <div className="sidebar-footer">
           <div className="phase-pill">
             <ShieldCheck size={12} />
-            Phase 1 Foundation
+            Audit Ledger Active
           </div>
           <div className="sidebar-meta">
             Audit logging middleware and access accountability system.

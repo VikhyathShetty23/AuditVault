@@ -24,7 +24,7 @@ const Layout = ({ children }) => {
         </main>
         <footer className="app-footer">
           <span>AuditVault &mdash; Information Security &amp; Audit Logging Architecture</span>
-          <span>Phase 1 Frontend Foundation</span>
+          <span>JWT Authenticated &bull; Append-Only Audit Ledger</span>
         </footer>
       </div>
     </div>
