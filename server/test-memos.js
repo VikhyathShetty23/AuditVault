@@ -4,6 +4,7 @@ import mongoose from 'mongoose';
 import express from 'express';
 import memoRoutes from './routes/memoRoutes.js';
 import Memo from './models/Memo.js';
+import AuditLog from './models/AuditLog.js';
 import {
   createMemo,
   getMemos,
@@ -328,6 +329,9 @@ test('Memo Router Integration Tests (Express End-to-End)', async (t) => {
   const originalCreate = Memo.create;
   const originalFind = Memo.find;
   const originalFindById = Memo.findById;
+  const originalAuditCreate = AuditLog.create;
+
+  AuditLog.create = async (data) => ({ _id: new mongoose.Types.ObjectId(), ...data });
 
   Memo.create = async (data) => {
     const id = new mongoose.Types.ObjectId().toString();
@@ -433,5 +437,6 @@ test('Memo Router Integration Tests (Express End-to-End)', async (t) => {
     Memo.create = originalCreate;
     Memo.find = originalFind;
     Memo.findById = originalFindById;
+    AuditLog.create = originalAuditCreate;
   }
 });

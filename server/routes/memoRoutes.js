@@ -6,8 +6,11 @@ import {
   updateMemo,
   deleteMemo,
 } from '../controllers/memoController.js';
+import auditMiddleware from '../middleware/auditMiddleware.js';
 
 const router = express.Router();
+
+router.use(auditMiddleware);
 
 router.route('/')
   .post(createMemo)
